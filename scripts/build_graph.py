@@ -1,40 +1,59 @@
+import os
 import networkx as nx
 import pandas as pd
-import os
 import logging
+from pathlib import Path
 
-# Setup logging
-logging.basicConfig(filename='./logs/knowledge_graph.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Initialize logging
+logging.basicConfig(filename='./logs/build_graph.log', level=logging.INFO)
 
-PROCESSED_DATA_PATH = './data/processed/'
+# Function to get data path
+def get_data_path(data_type):
+    base_path = Path('./data')
+    return base_path / data_type
 
-def build_knowledge_graph():
-    try:
-        G = nx.Graph()
+PROCESSED_DATA_PATH = get_data_path('processed')
 
-        google_trends_path = f"{PROCESSED_DATA_PATH}processed_google_trends.csv"
-        if not os.path.exists(google_trends_path):
-            raise FileNotFoundError(f"Processed Google Trends file not found: {google_trends_path}")
+def add_nodes_and_edges(graph, data, category):
+    """
+    Add nodes and edges to the graph based on the collected data.
+    """
+    if data is not None:
+        for index, row in data.iterrows():
+            if 'title' in row:
+                title = row['title']
+                graph.add_node(title, category=category)
+                if 'keywords' in row:
+                    keywords = row['keywords'].split(',')
+                    for keyword in keywords:
+                        graph.add_node(keyword, category='Keyword')
+                        graph.add_edge(title, keyword, relation='Contains')
+                if 'entities' in row:
+                    entities = row['entities']
+                    for entity in entities:
+                        graph.add_node(entity, category='Entity')
+                        graph.add_edge(title, entity, relation='Mentions')
+            if 'subreddit' in row:
+                subreddit = row['subreddit']
+                graph.add_node(subreddit, category='Subreddit')
+                graph.add_edge(subreddit, title, relation='Discusses')
 
-        google_trends_df = pd.read_csv(google_trends_path, index_col=0)
-        reddit_df = pd.read_csv(f"{PROCESSED_DATA_PATH}processed_reddit.csv")
+def build_knowledge_graph(graph):
+    sources = ['google_trends', 'reddit', 'hacker_news', 'stackoverflow', 'dev_to', 'product_hunt']
+    for source in sources:
+        files = [f for f in os.listdir(PROCESSED_DATA_PATH) if f.startswith(f'processed_{source}')]
+        for file in files:
+            logging.info(f"Processing file: {file}")
+            df = pd.read_csv(os.path.join(PROCESSED_DATA_PATH, file))
+            add_nodes_and_edges(graph, df, source)
+    logging.info(f"Graph built with {len(graph.nodes())} nodes and {len(graph.edges())} edges.")
 
-        for keyword in google_trends_df.columns[:-1]:  # Exclude 'isPartial' column
-            G.add_node(keyword)
-            for other_keyword in google_trends_df.columns[:-1]:
-                if keyword != other_keyword:
-                    G.add_edge(keyword, other_keyword, relation='co-trend')
+def save_graph(graph, path='./data/processed/knowledge_graph.gexf'):
+    nx.write_gexf(graph, path)
+    logging.info(f"Knowledge graph saved to {path}.")
 
-        for _, row in reddit_df.iterrows():
-            G.add_node(row['title'])
-            G.add_edge(row['subreddit'], row['title'], relation='discussed_in')
-
-        nx.write_gexf(G, f"{PROCESSED_DATA_PATH}knowledge_graph.gexf")
-        logging.info("Knowledge graph saved as knowledge_graph.gexf")
-        return G
-    except Exception as e:
-        logging.error(f"Error building knowledge graph: {e}")
-        return None
-
+# Example usage
 if __name__ == "__main__":
-    build_knowledge_graph()
+    graph = nx.Graph()
+    build_knowledge_graph(graph)
+    save_graph(graph)
